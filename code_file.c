@@ -1,5 +1,6 @@
-void swap(var int, var int);
+#include "myHeader.h"
 
+void swap(var int, var int);
 
 void main() {
   int a, b;
