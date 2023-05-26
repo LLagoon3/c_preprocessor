@@ -21,15 +21,15 @@ class processor():
     def __init__(self) -> None:
         self.datatype_list = deque()
         self.symbol = {'\n': ' $linespace ',
-                       #',': ' , ',
-                       #'var': ' $var',
+                       '\t': ' $tab ',
                        ',': ' $comma ',
                        '(': ' $bracket ',
                        ')': ' $cbracket ',
                        ';': ' $semicol '}
         self.re_dict = {
-            'macro': re.compile('\#include+\s+\"\w+\.h\"'),
-            'varfunc': re.compile("\$datatype\s+\w+\s+\$bracket[\s*var\s+\$datatype\s+\w+\s*\$comma]*\s*var\s+\$datatype\s+\w+\s*\$cbracket"),
+            'include': re.compile('\#include+\s+\"\w+\.h\"'),
+            'varfunc_': re.compile("\$datatype\s+\w+\s+\$bracket[\s*[var\s+]*\$datatype\s+\w+\s*\$comma]*\s*var\s+\$datatype\s+\w+\s*\$cbracket"),
+            'varfunc': re.compile("\$datatype\s+\w+\s+\$bracket\s*[var\s+\$datatype\s+\w+\s*\$comma]*"),
             'defunc': re.compile("\$datatype\s+\w+\s+\$bracket[\s*var\s+\$datatype\s*\$comma]*\s*var\s+\$datatype\s*\$cbracket"),
             'callfunc': re.compile("\s*\w+\s*\$bracket[\s*\w+\s*\$comma]*\s*\w+\s*\$cbracket"),
             'define': re.compile("\s*\#define\s+\w+\s+\w+"),
@@ -61,10 +61,9 @@ class processor():
             res_str += " " + word + " "
         for key, val in self.symbol.items():
             res_str = res_str.replace(val, key)
-        res_str = re.sub('[\s]+', ' ', res_str)
         return res_str
     
-    def processMacro(self, word_list: list) -> list:
+    def processInclude(self, word_list: list) -> list:
         if word_list[0] == "#include":
             file = self.read_file("./" + word_list[1].replace('"', ''))
             res = self.execute_(file)
@@ -81,7 +80,11 @@ class processor():
     
     def processVar(self, word_list: deque, varFunc: set, varData: set) -> list:
         res_stack = deque([word_list.popleft()])
-        if res_stack[0] in varFunc:
+        first = 0
+        if res_stack[0] == '$tab': 
+            res_stack.append(word_list.popleft())
+            first += 1
+        if res_stack[first] in varFunc:
             bracket = False
             while word_list:
                 tmp = word_list.popleft()
@@ -90,13 +93,16 @@ class processor():
                     res_stack.append('&')
                 elif tmp == '$bracket': bracket = True
                 res_stack.append(tmp)
-        elif res_stack[0] == '$datatype':
+        elif res_stack[first] == '$datatype':
+            var = False
             while word_list:
                 res_stack.append(word_list.popleft())
                 if res_stack[-1] == 'var':
                     res_stack.pop()
-                elif res_stack[-1] == '$datatype':
+                    var = True
+                elif res_stack[-1] == '$datatype' and var:
                     res_stack.append('*')
+                    var = False
         else:
             while word_list:
                 if res_stack[-1] in varData:
@@ -114,12 +120,13 @@ class processor():
         
         for line in file:
             word_list = self.encoding(line)
+            print(word_list)
             line = ' '.join(word_list)
             if '}' in line: 
                 varData = set()
 
-            if self.re_dict['macro'].findall(line):
-                result += self.processMacro(word_list)[0] + "\n"
+            if self.re_dict['include'].findall(line):
+                result += self.processInclude(word_list)[0] + "\n"
                 continue
             elif self.re_dict['define'].findall(line):
                 defineData[word_list[1]] = word_list[2]
@@ -130,7 +137,7 @@ class processor():
             elif self.re_dict['varfunc'].findall(line):
                 varFunc.add(word_list[1])
                 for index, word in enumerate(word_list):
-                    if word == '$datatype' and index != 0: varData.add(word_list[index + 1])
+                    if word == '$datatype' and word_list[index - 1] == 'var' and index != 0: varData.add(word_list[index + 1])
                 word_list, varFunc, varData = self.processVar(word_list, varFunc, varData)
             elif self.re_dict['callfunc'].findall(line):
                 word_list, varFunc, varData = self.processVar(word_list, varFunc, varData)
@@ -138,27 +145,30 @@ class processor():
                 word_list, varFunc, varData = self.processVar(word_list, varFunc, varData)
             if set(defineData.keys()) & set(word_list):
                 word_list = self.processDefine(word_list, defineData)
-            result += self.decoding((word_list)) + '\n'
+            result += self.decoding((word_list))
 
         return result
         
     def debug(self):
-        text = '$datatype swap $bracket var $datatype x , var $datatype y $cbracket { $linespace'
-        text2 = '$datatype main $bracket $cbracket { $linespace'
-        varfunc = re.compile("\$datatype\s+\w+\s+\$bracket[\s*var\s+\$datatype\s+\w+\s*\,]*\s*var\s+\$datatype\s+\w+\s*\$cbracket")
+        text = '$datatype swap $bracket var $datatype x $comma $datatype y $cbracket { $linespace'
+        text2 = '$datatype swap $bracket var $datatype x $comma var $datatype y $cbracket { $linespace'
+        text3 = '$tab swap $bracket a $comma b $cbracket $semicol $linespace'
+        varfunc = re.compile("\$datatype\s+\w+\s+\$bracket[[\s*var\s+\$datatype\s+\w+\s*\$comma]*[\s*\$datatype\s+\w+\s*\$comma]*]*[[\s*var\s+\$datatype\s+\w+]+|[\s*\$datatype\s+\w+]+\s*\$cbracket")
+        varfunc = re.compile("\$datatype\s+\w+\s+\$bracket\s*[var\s+\$datatype\s+\w+\s*\$comma]*")
         varfunc_name = re.compile("\w+")
         print(varfunc.findall(text))
-        print(varfunc_name.findall(text2)[1])
+        print(varfunc.findall(text2))
+        print(varfunc.findall(text3))
         callfunc = re.compile("\s*\w+\s*\$bracket[\s*\w+\s*\$comma]*\s*\w+\s*\$cbracket")
         text = "swap $bracket a $comma b $cbracket $semicol $linespace"
         text = '#include "myHeader.h" $linespace'
         text2 = '$linespace'
         defunc = re.compile('\#include\s+\"\w+\.h\"')
-        print(defunc.findall(text))
-        print(defunc.findall(text2))
+        # print(defunc.findall(text))
+        # print(defunc.findall(text2))
         varData = {'a', 'b'}
         word = ['c', 'a', 'k', 'e']
-        print(varData & set(word))
+        # print(varData & set(word))
             
     # def processVar(self, stack: list, symbol: str) -> list:
     #     if stack[-1] == '!$datatype': 
@@ -172,7 +182,7 @@ class processor():
     #     varFunc, varData, globalData = set(), set(), set()
     #     for line in file:
     #         line = self.encoding(line)
-    #         stack = list()
+    #         stack = list()    
     #         var, varfunc = False, False
     #         for index, word in enumerate(line):
     #             if '#' in word: self.processMacro(line)
